@@ -1,6 +1,8 @@
 import re
 import argparse
 from pypdf import PdfReader
+from datetime import datetime
+import math
 
 ioc_patterns = {
     "host": r"(?i)\b((?:(?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+(?!apk|apt|arpa|asp|bat|bdoda|bin|bsspx|cer|cfg|cgi|class|close|cpl|cpp|crl|css|dll|doc|docx|dyn|exe|fl|gz|hlp|htm|html|ico|ini|ioc|jar|jpg|js|jxr|lco|lnk|loader|log|lxdns|mdb|mp4|odt|pcap|pdb|pdf|php|plg|plist|png|ppt|pptx|quit|rar|rtf|scr|sleep|ssl|torproject|tmp|txt|vbp|vbs|w32|wav|xls|xlsx|xml|xpi|dat($|\r\n)|gif($|\r\n)|xn$)(?:xn--[a-zA-Z0-9]{2,22}|[a-zA-Z]{2,13}))(?!.*@)",
@@ -49,10 +51,43 @@ def extract_incident_description(content):
     
     if start_index != -1 and end_index != -1:
         incident_description = content[start_index + len(start_marker):end_index].strip()
+        
+        # Remove "*" from the start if present
+        if incident_description.startswith("*"):
+            incident_description = incident_description[1:].strip()
+        
+        # Remove "Edit" from the end if present
+        if incident_description.endswith("Edit"):
+            incident_description = incident_description[:-4].strip()
+        
         return incident_description
     else:
         return None
 
+def extract_timestamps(content):
+    # Look for the specific pattern
+    pattern = r"When was this incident detected\?\s*\*\s*([\d/]+,\s*[\d:]+\s*[APM]+)\s*When approximately, did the incident\s*start\?\s*\*\s*([\d/]+,\s*[\d:]+\s*[APM]+)"
+    
+    match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+    
+    if match:
+        detect_time_str, start_time_str = match.groups()
+        
+        try:
+            detect_time = datetime.strptime(detect_time_str.strip(), "%m/%d/%Y, %I:%M %p")
+            start_time = datetime.strptime(start_time_str.strip(), "%m/%d/%Y, %I:%M %p")
+            
+            incident_start = min(start_time, detect_time)
+            incident_detected = max(start_time, detect_time)
+            
+            return incident_start, incident_detected
+        except ValueError as e:
+            print("Error parsing dates: {}".format(e))
+            return None, None
+    else:
+        print("Timestamp pattern not found in the content.")
+        return None, None
+        
 def is_whitelisted(indicator, ioc_type):
     if ioc_type in ['host', 'url', 'email_address']:
         for domain in whitelist_domains:
@@ -78,30 +113,33 @@ def main(file_path, show_raw):
         print("Failed to extract content from the PDF.")
         return
     
+    # Count indicators
     indicators = count_indicators(extracted_text)
-    
     total_indicators = sum(len(matches) for matches in indicators.values())
-    indicators_with_data = sum(1 for matches in indicators.values() if matches)
-    indicators_without_data = total_indicators - indicators_with_data
 
-    # Visualization and Summary
-    print("=" * 40)
+    # Summary and Visualization
+    print("=" * 60)
     print("Summary and Visualization:")
-    print(f"Total indicators submitted: {total_indicators}")
-    print(f"Indicators with data: {indicators_with_data}")
-    print(f"Indicators without data: {indicators_without_data}")
+    print("-" * 60)
     
-    # Simple ASCII bar chart
-    max_bar_length = 20
-    with_data_bar = "█" * int((indicators_with_data / total_indicators) * max_bar_length) if total_indicators > 0 else ""
-    without_data_bar = "░" * int((indicators_without_data / total_indicators) * max_bar_length) if total_indicators > 0 else ""
-    print("\nVisualization:")
-    print(f"With data    : {with_data_bar} ({indicators_with_data})")
-    print(f"Without data : {without_data_bar} ({indicators_without_data})")
+    print("-" * 60)
+    print(f"Total indicators submitted: {total_indicators}")
+    
+    # Bar graph for IOC types
+    if total_indicators > 0:
+        print("\nIndicator Type Distribution:")
+        max_bar_length = 40
+        for ioc_type, matches in indicators.items():
+            count = len(matches)
+            ratio = count / total_indicators
+            bar_length = math.ceil(ratio * max_bar_length)
+            bar = "█" * bar_length
+            print(f"{ioc_type:<15}: {bar} ({count}, {ratio:.1%})")
+    
+    print("=" * 60)
 
     # Indicators lists
-    print("\n" + "=" * 40)
-    print("Indicators lists:")
+    print("\nIndicator List:")
     for ioc_type, matches in indicators.items():
         if matches:
             print(f"\n{ioc_type}:")
@@ -109,19 +147,14 @@ def main(file_path, show_raw):
                 print(f"  - {match}")
     
     if show_raw:
-        print("\n" + "=" * 40)
+        print("\n" + "=" * 60)
         print("Raw text extracted:")
         print(extracted_text)
-
-    print("\n" + "=" * 40)
-    print("Whitelisted domains:")
-    for domain in whitelist_domains:
-        print(f"  - {domain}")
 
     # Incident Description
     incident_description = extract_incident_description(full_content)
     if incident_description:
-        print("\n" + "=" * 40)
+        print("\n" + "=" * 60)
         print("Incident Description:")
         print(incident_description)
     else:

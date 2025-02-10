@@ -74,5 +74,5 @@ The script provides the following output:
 
 You can modify the `whitelist_domains` set in the script to add or remove domains that should be excluded from the extracted indicators.
 
-## Autho
+## Author
 Community Driven Project
